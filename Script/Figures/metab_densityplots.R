@@ -242,6 +242,8 @@ gpp_by_day <- merged_kalman_smoke %>%
   group_by(date, Smoke.day, SiteName) %>%
   summarize(Daily_GPP = median(GPP, na.rm = TRUE))
 
+gpp_by_day$Smoke.day <- ifelse(is.na(gpp_by_day$Smoke.day), "n", gpp_by_day$Smoke.day)
+
 gpp_by_day <- gpp_by_day %>% filter(!is.na(Smoke.day))
 
 # Plot density plot of daily GPP 
@@ -315,9 +317,48 @@ plot_grid(density_plot_swrad_20, density_plot_swrad_20_topaz, density_plot_swrad
 plot_grid(density_plot_swrad_20, density_plot_swrad_21, ncol=1)
 
 
+#################################################################################################
+## calculate change in each metabolic rate on smoke day vs non smoke day
+medians_smoke <- sapply(merged_kalman_smoke[merged_kalman_smoke$Smoke.day == "y", c("GPP", "NEP", "R")], median, na.rm = TRUE)
+medians_nonsmoke <- sapply(merged_kalman_smoke[merged_kalman_smoke$Smoke.day == "n", c("GPP", "NEP", "R")], median, na.rm = TRUE)
+
+# Calculate the differences
+diffs <- medians_smoke - medians_nonsmoke
+
+diffs_df <- data.frame(
+  Variable = c("GPP", "NEP", "R"),
+  Median_Smoke = medians_smoke,
+  Median_NonSmoke = medians_nonsmoke,
+  Difference = diffs
+)
+
+diffs_bysite_2020 <- merged_kalman_smoke %>%
+  filter(Smoke.day %in% c("y", "n")) %>%
+  group_by(SiteName) %>%
+  summarize(
+    Median_GPP_Smoke = median(GPP[Smoke.day == "y"], na.rm = TRUE),
+    Median_GPP_NonSmoke = median(GPP[Smoke.day == "n"], na.rm = TRUE),
+    Median_NEP_Smoke = median(NEP[Smoke.day == "y"], na.rm = TRUE),
+    Median_NEP_NonSmoke = median(NEP[Smoke.day == "n"], na.rm = TRUE),
+    Median_R_Smoke = median(R[Smoke.day == "y"], na.rm = TRUE),
+    Median_R_NonSmoke = median(R[Smoke.day == "n"], na.rm = TRUE)
+  ) %>%
+  mutate(
+    ΔGPP = Median_GPP_NonSmoke - Median_GPP_Smoke,
+    ΔNEP = Median_NEP_NonSmoke - Median_NEP_Smoke,
+    ΔR = Median_R_NonSmoke - Median_R_Smoke,
+    ΔGPP_Percent = (abs((Median_GPP_NonSmoke - Median_GPP_Smoke)) / Median_GPP_NonSmoke) * 100,
+    ΔNEP_Percent = (abs((Median_NEP_NonSmoke - Median_NEP_Smoke)) / Median_NEP_NonSmoke) * 100,
+    ΔR_Percent = (abs((Median_R_NonSmoke - Median_R_Smoke)) / Median_R_NonSmoke) * 100
+  )
 
 #####################################################################################################
+#daily GPP, by smoke day, by lake
+gpp_by_day <- merged_kalman_smoke %>%
+  group_by(date, Smoke.day, SiteName) %>%
+  summarize(Daily_GPP = median(GPP, na.rm = TRUE))
 
+gpp_by_day$Smoke.day <- ifelse(is.na(gpp_by_day$Smoke.day), "n", gpp_by_day$Smoke.day)
 
 
 ggplot(gpp_by_day, aes(x = Daily_GPP, fill = Smoke.day)) +
@@ -336,7 +377,10 @@ gpp_by_day$year = year(gpp_by_day$date)
 site_split <- split(gpp_by_day, gpp_by_day$SiteName)
 
 # Create a list to store t-test results
-t_test_results <- list()
+#t_test_results <- list()
+
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
@@ -350,10 +394,15 @@ median_gpp_df <- data.frame()
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -376,7 +425,8 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)+  # Color the asterisk darkorange if p < 0.05
+             #color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)+  # Color the asterisk darkorange if p < 0.05
+    color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)+  # Color the asterisk darkorange if p < 0.05
   theme_bw()+
     theme(panel.grid = element_blank())
 
@@ -453,8 +503,8 @@ nep_by_day$year = year(nep_by_day$date)
 # Split the data by SiteName
 site_split <- split(nep_by_day, nep_by_day$SiteName)
 
-# Create a list to store t-test results
-t_test_results <- list()
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
@@ -462,16 +512,22 @@ site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")
 # List to store plots
 plot_list_NEP_20 <- list()
 
-# Dataframe to store median NEP by Smoke.day and SiteName
+# Dataframe to store median GPP by Smoke.day and SiteName
 median_nep_df <- data.frame()
 
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_NEP ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_NEP ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
+  
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -497,7 +553,8 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+            # color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+  color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)  # Color the asterisk darkorange if p < 0.05
   
   # Add the plot to the list
   plot_list_NEP_20[[site]] <- density_plot
@@ -572,27 +629,32 @@ R_by_day$year = year(R_by_day$date)
 # Split the data by SiteName
 site_split <- split(R_by_day, R_by_day$SiteName)
 
-# Create a list to store t-test results
-t_test_results <- list()
+
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
 
-
-
 # List to store plots
 plot_list_R_20 <- list()
 
-# Dataframe to store median NEP by Smoke.day and SiteName
+# Dataframe to store median GPP by Smoke.day and SiteName
 median_r_df <- data.frame()
 
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_R ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_R ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
+  
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -617,8 +679,9 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
-  
+             #color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+  color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)  # Color the asterisk darkorange if p < 0.05
+
   # Add the plot to the list
   plot_list_R_20[[site]] <- density_plot
   
@@ -775,6 +838,32 @@ smoke_topaz_21 <- smoke_topaz_21[with(smoke_topaz_21, date >= "2021-07-02" & dat
 # Remove rows where "flag" column contains "y"
 merged_kalman_21_smoke <- merged_kalman_21_smoke[merged_kalman_21_smoke$flag != "y", ]
 
+
+
+
+#########################################################################################
+
+diffs_bysite_2021 <- merged_kalman_21_smoke %>%
+  filter(Smoke.day %in% c("y", "n")) %>%
+  group_by(SiteName) %>%
+  summarize(
+    Median_GPP_Smoke = median(GPP[Smoke.day == "y"], na.rm = TRUE),
+    Median_GPP_NonSmoke = median(GPP[Smoke.day == "n"], na.rm = TRUE),
+    Median_NEP_Smoke = median(NEP[Smoke.day == "y"], na.rm = TRUE),
+    Median_NEP_NonSmoke = median(NEP[Smoke.day == "n"], na.rm = TRUE),
+    Median_R_Smoke = median(R[Smoke.day == "y"], na.rm = TRUE),
+    Median_R_NonSmoke = median(R[Smoke.day == "n"], na.rm = TRUE)
+  ) %>%
+  mutate(
+    ΔGPP = Median_GPP_NonSmoke - Median_GPP_Smoke,
+    ΔNEP = Median_NEP_NonSmoke - Median_NEP_Smoke,
+    ΔR = Median_R_NonSmoke - Median_R_Smoke,
+    ΔGPP_Percent = (abs((Median_GPP_NonSmoke - Median_GPP_Smoke)) / Median_GPP_NonSmoke) * 100,
+    ΔNEP_Percent = (abs((Median_NEP_NonSmoke - Median_NEP_Smoke)) / Median_NEP_NonSmoke) * 100,
+    ΔR_Percent = (abs((Median_R_NonSmoke - Median_R_Smoke)) / Median_R_NonSmoke) * 100
+  )
+#########################################################################################
+
 #daily GPP, by smoke day, by lake
 gpp_by_day <- merged_kalman_21_smoke %>%
   group_by(date, Smoke.day, SiteName) %>%
@@ -809,7 +898,10 @@ gpp_by_day$year = year(gpp_by_day$date)
 site_split <- split(gpp_by_day, gpp_by_day$SiteName)
 
 # Create a list to store t-test results
-t_test_results <- list()
+#t_test_results <- list()
+
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
@@ -823,10 +915,15 @@ median_gpp_df <- data.frame()
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_GPP ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -852,8 +949,9 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
-  
+             #color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+  color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)  # Color the asterisk darkorange if p < 0.05
+
 
   # Add the plot to the list
   plot_list_GPP_21[[site]] <- density_plot
@@ -991,7 +1089,10 @@ nep_by_day$year = year(nep_by_day$date)
 site_split <- split(nep_by_day, nep_by_day$SiteName)
 
 # Create a list to store t-test results
-t_test_results <- list()
+#t_test_results <- list()
+
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
@@ -999,13 +1100,21 @@ site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")
 # List to store plots
 plot_list_NEP_21 <- list()
 
+# Dataframe to store median GPP by Smoke.day and SiteName
+median_nep_df <- data.frame()
+
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_NEP ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_NEP ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_NEP ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -1030,8 +1139,9 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
-  
+             #color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+  color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)  # Color the asterisk darkorange if p < 0.05
+
   # Add the plot to the list
   plot_list_NEP_21[[site]] <- density_plot
 }
@@ -1075,27 +1185,32 @@ R_by_day$year = year(R_by_day$date)
 site_split <- split(R_by_day, R_by_day$SiteName)
 
 # Create a list to store t-test results
-t_test_results <- list()
+#t_test_results <- list()
+
+#Create a list to store Mann-Whitney U test
+wilcox_result <- list()
 
 # Reorder SiteNames by size
 site_order <- c("Emerald", "Topaz", "EMLPOND1","TOK11","TOPAZPOND","TOK30")  
 
-# Find the overall range of Daily_R for setting xlim
-overall_range <- range(unlist(lapply(site_split, function(x) x$Daily_R)))
-
-
 # List to store plots
 plot_list_R_21 <- list()
 
+# Dataframe to store median GPP by Smoke.day and SiteName
 median_r_df <- data.frame()
 
 # Loop through each SiteName in the specified order
 for (site in site_order) {
   # Perform t-test
-  t_test_result <- t.test(Daily_R ~ Smoke.day, data = site_split[[site]])
+  #t_test_result <- t.test(Daily_R ~ Smoke.day, data = site_split[[site]])
+  
+  # Perform Mann-Whitney U test (Wilcoxon Rank-Sum test)
+  wilcox_result <- wilcox.test(Daily_R ~ Smoke.day, data = site_split[[site]])
   
   # Label if significant
-  significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(t_test_result$p.value < 0.05, "*", "")
+  #significance_label <- ifelse(wilcox_result$p.value < 0.05, "*", "")
+  significance_label <- ifelse(wilcox_result$p.value < 0.05, paste("p=", format(wilcox_result$p.value, digits = 3)), "")
   
   # Extract year from the data
   year_label <- unique(site_split[[site]]$year)
@@ -1120,8 +1235,10 @@ for (site in site_order) {
     # Add t-test results to the plot
     annotate("text", x = Inf, y = Inf,
              label = significance_label,
-             color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
-  # Add SiteName to the median data
+         #    color = ifelse(t_test_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=8)  # Color the asterisk darkorange if p < 0.05
+  color = ifelse(wilcox_result$p.value < 0.05, "black", "black"), hjust = 1, vjust = 1, size=3)  # Color the asterisk darkorange if p < 0.05
+
+   # Add SiteName to the median data
   median_data$SiteName <- site
   
   # Combine with existing median_gpp_df
@@ -1348,6 +1465,26 @@ merged_kalman_22_smoke <- merged_kalman_22_smoke[merged_kalman_22_smoke$flag != 
 merged_kalman_22_smoke <- merged_kalman_22_smoke[with(merged_kalman_22_smoke, date >= "2022-07-02" & date <= "2022-10-05"),]
 
 
+
+diffs_bysite_2022 <- merged_kalman_22_smoke %>%
+  filter(Smoke.day %in% c("y", "n")) %>%
+  group_by(SiteName) %>%
+  summarize(
+    Median_GPP_NonSmoke = median(GPP[Smoke.day == "n"], na.rm = TRUE),
+    Median_NEP_NonSmoke = median(NEP[Smoke.day == "n"], na.rm = TRUE),
+    Median_R_NonSmoke = median(R[Smoke.day == "n"], na.rm = TRUE)
+  ) 
+
+
+# wd <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output"
+# setwd(wd)
+# 
+# write.csv(diffs_bysite_2020, file="diffs_bysite_2020.csv")
+# write.csv(diffs_bysite_2021, file="diffs_bysite_2021.csv")
+# write.csv(diffs_bysite_2022, file="diffs_bysite_2022.csv")
+
+
+###############################################################################################################################################################
 
 #daily GPP,  by lake
 gpp_by_day <- merged_kalman_22_smoke %>%
@@ -1698,7 +1835,7 @@ get_plot <- function(year, site) {
   if (site == "TOK30" && year == 2021) {
     plot <- plot +
       scale_x_continuous(labels = scales::number_format(), limits = c(-0.5, 2.5), breaks = seq(-0.5, 2.5, 0.5),
-                         name = "Daily GPP")  
+                         name = expression("Daily GPP" ~ "(" ~ mg ~ O[2] ~ L^-1 ~ d^-1 ~ ")"))
   } else {
     plot <- plot +
       theme(axis.title.x = element_blank())
@@ -1729,8 +1866,8 @@ print(combined_plot)
 
 
 # Save the plot
-plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_gpp.png"
-ggsave(plotsave_file_path, combined_plot, width = 10, height = 10, units = "in",dpi = 300)
+plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_gpp_29Jun2024.png"
+ggsave(plotsave_file_path, combined_plot, width = 9, height = 10, units = "in",dpi = 300)
 
 
 ##############################################################################################
@@ -1930,8 +2067,8 @@ get_plot <- function(year, site) {
   # Remove x-axis labels for all but 1 site
   if (site == "TOK30" && year == 2021) {
     plot <- plot +
-      scale_x_continuous(labels = scales::number_format(), limits = c(-1, 1), breaks = seq(-1, 1, 0.5),
-                         name = "Daily NEP")  
+      scale_x_continuous(labels = scales::number_format(), limits = c(-0.5, 2.5), breaks = seq(-0.5, 2.5, 0.5),
+                         name = expression("Daily NEP" ~ "(" ~ mg ~ O[2] ~ L^-1 ~ d^-1 ~ ")"))
   } else {
     plot <- plot +
       theme(axis.title.x = element_blank())
@@ -1962,8 +2099,8 @@ print(combined_plot)
 
 
 # Save the plot
-plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_nep.png"
-ggsave(plotsave_file_path, combined_plot, width = 10, height = 10, units = "in",dpi = 300)
+plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_nep_29JUN2024.png"
+ggsave(plotsave_file_path, combined_plot, width = 9, height = 10, units = "in",dpi = 300)
 
 
 
@@ -1977,7 +2114,7 @@ library(patchwork)
 plot_lists <- list(plot_list_R_20, plot_list_R_21, plot_list_R_22)
 
 
-# Create a data frame to represent the combination of plots and years
+# Create a data frame to represent the combina tion of plots and years
 years <- c(2020, 2021, 2022)
 sites <- c("Emerald", "Topaz", "EMLPOND1", "TOK11", "TOPAZPOND", "TOK30")
 df <- expand.grid(year = years, site = sites)
@@ -2116,8 +2253,8 @@ get_plot <- function(year, site) {
   # Remove x-axis labels for all but 1 site
   if (site == "TOK30" && year == 2021) {
     plot <- plot +
-      scale_x_continuous(labels = scales::number_format(), limits = c(-.5, 2.5), breaks = seq(-.5, 2.5, 0.5),
-                         name = "Daily R")  
+      scale_x_continuous(labels = scales::number_format(), limits = c(-0.5, 2.5), breaks = seq(-0.5, 2.5, 0.5),
+                         name = expression("Daily R" ~ "(" ~ mg ~ O[2] ~ L^-1 ~ d^-1 ~ ")"))
   } else {
     plot <- plot +
       theme(axis.title.x = element_blank())
@@ -2149,8 +2286,8 @@ print(combined_plot)
 
 
 # Save the plot
-plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_r.png"
-ggsave(plotsave_file_path, combined_plot, width = 10, height = 10, units = "in",dpi = 300)
+plotsave_file_path <- "C:/Users/maryj/Documents/R/SierraPonds/PondMetabolism/Output/combined_density_plot_r_29JUN2024.png"
+ggsave(plotsave_file_path, combined_plot, width = 9, height = 10, units = "in",dpi = 300)
 
 
 
